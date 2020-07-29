@@ -278,14 +278,60 @@ In the context of sending a message, this method will be called by `suspend()` a
 
 ![Screenshot 2020-07-29 at 09.28.10](state-machine-transition.png)
 
-Next, the `processEvent()` method will be called **(2)** with the next event, this is where the state machine starts handling the `FlowIORequest` via the `StateMachine` **(3)**. There are various transition classes and in this case, the flow of execution ends up in the `StartedFlowTransition` **(4)** which describes what should happen with a `FlowIORequest`. The `sendTransition()` method handles the specific transition. This method creates a list of `Action`s for each message to be sent. Note there can be many actions to execute if many messages are to be send but in this example only one message will be sent and it's a message created in the context of a new flow session between two nodes, so `Action.SendInitial` is used. Otherwise, for an existing flow session, `Action.sendExisting` would be used.
+Next, the `processEvent()` method will be called **(2)** with the next event, this is where the state machine starts handling the `FlowIORequest` via the `StateMachine` **(3)**. There are various transition classes and in this case, the flow of execution ends up in the `StartedFlowTransition` **(4)** which describes what should happen with a `FlowIORequest`. The `sendTransition()` method handles the specific transition. This method creates a list of `Action`s for each message to be sent. Note there can be many actions to execute if many messages are to be sent but in this example only one message will be sent and it's a message created in the context of a new flow session between two nodes, so `Action.SendInitial` is used. Otherwise, for an existing flow session, `Action.sendExisting` would be used.
 
-Next, because message sending is asynchronous, the flow can be set to resume execution but before anything can be done, `Action.CreateTransaction` is added to the list of actions because a new database transaction should be created for all the new things which may happen[^things] since the last transaction was committed.
+Next, because message sending is asynchronous, the flow is set to resume execution but before anything can be done, `Action.CreateTransaction` is added to the list of actions because a new database transaction should be created for all the new things which may happen[^things] since the last transaction was committed. The flow is set to resume execution by the `sendTransition()` method returning the `FlowContinuation.Resume` class. This signals to the event loop in `processEventsUntilFlowIsResumed` to exit the loop and continue execution of the `FlowLogic`.
 
-After all this is done, the call stack unwinds back to `processEvent()` so that the recorded actinos can be executed.
+After all this is done, the call stack unwinds back to `processEvent()` so that the recorded actions can be executed.
 
 [^queue]: This "queue" is called a "channel" in Quasar parlence and facilitates the sending of a message to a Fiber. This is very similar to how messages work in Erlang, or channels work in Go
-[^happen]: Things like using `withEntityManager` or recording transactions and vault entries. All these things need to be done in the context of a database transaction. 
+[^Things]: Like using `withEntityManager` or recording transactions and vault entries. All these things need to be done in the context of a database transaction. 
+
+**ActionExecution**
+
+This is where the actual message sending happens. After the next state and list of actions have been determined, the `TransitionExecutor` is invoked **(1)**, which iterates through the list of actions and executes each one via the `ActionExecutor`. The `ActionExecutor` is basically a big `when` statement with instructions for what to do for each action. In our case, sending a message requires a code path which involves the `MessagingService`.
+
+![actions-and-call-stack](/Users/rogerwillis/Desktop/flow messaging/actions-and-call-stack.png)
+
+In the picture above, you can see a debugging session with a breakpoint situated in the `ActionEcutorImpl` class before the next list of actions are to be executed for sending a message. As mentioned previously, the two actions to execute are to send a message and to create a transaction. Also, the continuation state is set to `Resume`.
+
+![execute-action](/Users/rogerwillis/Desktop/flow messaging/execute-action.png)
+
+From the `ActionExecutor`, the `FlowMessaging` API is called to `sendSessionMessage()` **(2)**. This takes a `SessionMessage` and does some checking to see that the `Desination` for the message is a valid `Party`. It also serializes the `SessionMessage` and wraps it with an implementation of the `Message` class. It's worth noting here that if the message is an initial session message then it also contains some metadata such as the `FlowLogic` sub-class which the remote node should instantiate upon receiving the message and the session ID for the sender. If the message is for an exisitng session, then the session ID for the remote node is included, so that it can easily match up the received message to the correct flow state machine.
+
+```kotlin
+data class InitialSessionMessage(
+        val initiatorSessionId: SessionId,
+        val initiationEntropy: Long,
+        val initiatorFlowClassName: String,
+        val flowVersion: Int,
+        val appName: String,
+        val firstPayload: SerializedBytes<Any>?
+) : SessionMessage() 
+```
+
+```kotlin
+interface Message {
+    val topic: String
+    val data: ByteSequence	// The serialized `SessionMessage`.
+    val debugTimestamp: Instant
+    val uniqueMessageId: DeduplicationId
+    val senderUUID: String?
+    val additionalHeaders: Map<String, String>
+}
+```
+
+Next, the local queue name for the target peer is looked-up and the `Message` is wrapped in an `AddressedMessage` class:
+
+```kotlin
+data class AddressedMessage(
+        val message: Message,
+        val target: MessageRecipients,
+        val sequenceKey: Any = target
+)
+```
+
+From this point **(3)**, the `MessagingService` passes on the `AddressedMessage` to the `MessagingExecutor`, which then checks that the internal peer queue exists and if not, then creates it and then sends the message. That's it! The call stack then unwinds all the way back to `processEventsUntilFlowIsResumed` which then exists the event loop and returns to the `FlowSessionImpl` class where execution of the user flow resumes **(4)**. 
 
 ### Receiving messages
 
