@@ -2,11 +2,11 @@
 
 ## Background
 
-In order to understand messaging between Corda nodes, one must first understand some basic messaging concepts. Unless you have worked in a bank or enterprise technology environment then it's like that you will not be familiar with message brokers and that's OK. This section introduces all the concepts you need to forge ahead.
+In order to understand messaging between Corda nodes, one must first understand some basic messaging concepts. Unless you have worked in a bank or enterprise technology environment then it's likely that you will not be familiar with message brokers and that's OK. This section introduces all the concepts you need to forge ahead.
 
 ### Asynchronous versus synchronous messaging
 
-The first concept is understanding the difference between synchronous and asynchronous messaging. Synchronous messaging is characterised as a conversation, where both the sender and recipient machines must be available and capabable of sending and receiving messages, in real-time. With a synchronous approach, when a sender sends a message, they will wait until a response is recieved from the recipient. The recipient must be available to process the message and then send a response back to the sender, which also must still be available to receive it. Typical manifestations of synchronous messaging involve remote procedure calls (RPC) where a sender invokes a function on the recipients machine via sending it a message and then waits for the a resposne which is the return value of the remote function.
+The first concept is understanding the difference between synchronous and asynchronous messaging. Synchronous messaging is characterised as a conversation, where both the sender and recipient machines must be available and capabable of sending and receiving messages in real-time. With a synchronous approach, when a sender sends a message, they will wait until a response is recieved from the recipient. The recipient must be available to process the message and then send a response back to the sender, which also must still be available to receive it. Typical manifestations of synchronous messaging involve remote procedure calls (RPC) where a sender invokes a function on the recipients machine via sending it a message and then waits for the a resposne which is the return value of the remote function.
 
 With asynchronous messaging, there is no assumption that the sender or recipient must to be online to effectively participate in a messaging workflow. This is made possible by a piece of infrastructure called a message queue. Message queues receive messages from producers into a queue which can then be accessed by consumers at some point in the future. If the consumer is not available when the message is enqueued, then that's OK, they'll just receive the message when they are next available and check the queue. The broker handles persistence of the message for the time between when it is produced and consumed. We say this is durable messaging, that is, the broker ensures that the message is not "lost" for whatever reason at any point during its journey from producer to consumer. Lastly, using queues allows a producer process to continue execution after a message is sent, rather than blocking and waiting for a response as with a synchronous workflow. 
 
@@ -16,13 +16,13 @@ With Corda there is a requirement to provide durable and reliable messaging betw
 
 ### Point to point versus publish and subscribe
 
-Point to point messaging is, more or less, what is described above, where a producer sends a message to a queue which has only one consumer. With Artermis, this is called `ANYCAST` messaging. Sometimes there might be more than one consumer for a queue but even so, each message will only be received by a single consumer. In contrast, publish and subscribe involves sending a message to any number of consumers via a "topic", such that if the topic matches a topic of interest for consumers then they will receive the message. Usually, the publisher doesn't have knowledge of the consumers. In Artermis this is called `MULTICAST` messaging. With Corda we only use `ANYCAST` messaging for sending messages from one Corda node to another.
+Point to point messaging is, more or less, what is described above, where a producer sends a message to a queue which has only one consumer. With Artermis, this is called `ANYCAST` messaging. Sometimes there might be more than one consumer for a queue but even so, each message will only be received by a single consumer. In contrast, publish and subscribe involves sending a message to any number of consumers via a "topic", such that if the topic matches a topic of interest for consumers then they will receive the message. Usually, with publish and subscribe, the publisher doesn't have knowledge of the consumers. In Artermis this is called `MULTICAST` messaging. With Corda we only use `ANYCAST` messaging for sending messages from one Corda node to another.
 
 ### Delivery semantics
 
 Messaging systems allows administrators and application developers to tweak how reliable message delivery should be expected. There are usually three levels of relability:
 
-* **At most once**, which guarantess that a particular message is only ever received by the subscriber a maximum of one time but this does mean that the message may never arrive! With this apporach, message delivery will be attempted but if something fails and the message does not reach it's destination for whatever reason, the message may be lost. 
+* **At most once**, which guarantess that a particular message is only ever received by the subscriber a maximum of one time but of course this does mean that the message may never arrive! With this apporach, message delivery will be attempted but if something fails and the message does not reach it's destination for whatever reason, the message may be lost. 
 * **At least once**, which guarentees that a message will reach it's intended recipient one or more times. The sender will continue to send the message until it receives an acknowledgment from the recipient, confirming it has received the message. The result of this approach is that the message may be received multiple times. At least once delivery can be "bootstrapped" from at most once delivery if the sender is able to store and retry delivery should the previous attempt(s) have failed.
 * **Exactly once**, which ensures that a message is received by a recipient exactly one time. The recipient will never get duplicate copies of the message and will eventually get it but at the expense of additional network and processing overhead. Indeed, exctly once delivery can be bootstrapped from at least once delivery coupled with a deduplication mechanism on the recipient's side.
 
@@ -30,20 +30,20 @@ Corda makes use of exactly once delivery semantics.
 
 ## Basics
 
-To provide some initial context, it is worth noting that messages originate from flows (user-defined `FlowLogic` subclasses) via `FlowSession.send` calls and are ultimately consumed via user defined `FlowSession.receive` calls. In practise, other messages are exchanged between a set of nodes during a flow, such as agreeing a session id. However, for the purpose of this explanation, all we need to focus on are the `send` and `receive` calls defined in your flows.
+To provide some initial context, it is worth noting that messages originate from flows (user-defined `FlowLogic` subclasses) via `FlowSession.send` calls and are ultimately consumed via user defined `FlowSession.receive` calls. In practise, other messages are exchanged between a set of nodes during a flow — such as acknowleding message delivery — but for the purpose of this explanation, all we need to focus on are the `send` and `receive` calls defined in flows.
 
 ### The broker
 
 For a corda node to exchange messages with its peers, it must be associated with an Artermis MQ broker. This might be an embedded broker — that is, one which is instantiated programatically during node start-up — or one which is hosted externally to the node, in which case its host name must be provided in the configuration file for the node.
 
-Those who have experience with message brokers will probably note that it's unusual to embed a message broker into each node and you'd be right, it's not a common pattern! Instead, usually the broker is located on a server and has many clients, operating in a client-server fashion. Instead, Corda is different because the idea is to create a decentralised peer to peer network, so there must be a way for each node to queue up their own outbound messages and receive their own inbound messages. It follows that there must be a message broker (or equivalent) for each node. The brokers all provide two sets of queues:
+Those who have experience with message brokers will probably note that it's unusual to embed a message broker into each node and you'd be right, it's not a common pattern! Instead, usually the broker is located on a server and has many clients, operating in a client-server fashion. Instead, Corda is different because the idea is to create a decentralised peer to peer network, so there must be a way for each node to queue up their own outbound messages and receive their own inbound messages. It follows that there must be a message broker (or equivalent) for each node. The brokers all provide two sets of queues for their node:
 
 1. the inbound peer to peer queue where messages are received from other nodes, and; 
 2. a set of outbound queues, where there is one for each peer
 
 ### Peer to peer bridges
 
-In addition, there is the concept of a bridge[^bridge], which is used to create a connection from one message broker in one node, to another message broker in a remote node. As Corda is intended to operate as a peer to peer network, it's likely that the bridge will make a connection to other nodes over the Internet. As each node can have many peers, there are many bridges, one for each peer in each direction as depicted below.
+In addition, there is the concept of a bridge[^bridge], which is used to create a connection from one broker in one node, to another message broker in a remote node. As Corda is intended to operate as a peer to peer network, it's likely that the bridge will make a connection to other nodes over the Internet. As each node can have many peers, there are many bridges, one for each peer in each direction as depicted below.
 
 ![Screenshot 2020-07-21 at 16.09.17](high-level.png)
 
@@ -133,11 +133,7 @@ The `node-api` is a dependency of the Corda node and as such, if the Corda node 
 
 The diagram above (zoom in to see it clearly) shows how the various classes are instantiated from the `Node` class. Only the most pertinent classes and their properties and methods have been included in the diagram. When starting up the node, the `P2PMessagingClient` is created first but not started. Next, inside `Node.start` there is a call to `Node.startMessagingService`, which instantiates the `BridgeControlListener` and `ArtemisMessagingServer`. The `Node` then starts these two components along with the `P2PMessagingClient`. The `BridgeControlListener` creates an instance of the `AMQPBridgeManager`. The `AMQPBridgeManager` creates instances of `AMQPBridge`s when they are required.
 
-**<<Insert another picture which outlines the queues/bridges that each component makes>>**
-
 ### P2PMessagingClient
-
-
 
 The `P2PMessagingClient` is the node's implementation of the `MessagingService`. At a basic level it provides functionality to send messages to other nodes and receives (and acknowledges) messages from other nodes, but of course it does other things...
 
@@ -174,9 +170,11 @@ On startup a `BridgeToNodeSnapshot` message is sent to the node, requesting it e
 
 ### AMQPBridgeManager
 
-The `AMQPBridgeManager` 
+The `AMQPBridgeManager` handles the requests to create and destroy bridges. It also maintains a map of local peer queue names to the associated bridge which has been deployed. That's all it does really. The file containing this class has a lot of code because the `AMQPBridge` class is defined as an internal class.
 
 ### AMQPBridge
+
+The `AMQPBridge` itself is more complicated than the bridge manager, as there's quite a lot going on. In short, the bridge listens for messages on its associated `internal.peers.` queue and forwards them to the remote `p2p.inbound.` queue. The key thing to note here is that a message will only be removed from the local `internal.peers.` queue if it was successfully sent to the remote `p2p.inbound.` queue. Of course, that means, message delivery over the Internet must be acknowledged by the remote Artemis broker. As such, if the remote broker acknowledges message delivery, then so does the `AMQPBridge` to the local Artermis broker and thus the message is removed from the  `internal.peers.` queue and is delivered from the sending node's perspsective. If delivery acknowledgement is not confirmed from the remote Artemis broker then the message remains in the `internal.peers.` queue until delivery is acknowledged. Ensuring this works under all circumstances is tricky as the code needs to be robust in the case of flakey connections, packet loss and latency, etc.
 
 ## The journey of a message
 
@@ -217,9 +215,9 @@ State(S) x Event(E) -> Actions(A), State(S')
 
 > As **A** and **S'** depend only on **S** and **E**, the kind of state machine described here is a Mealy machine (see, for example, the Wikipedia article "Mealy machine").
 
-**ALSO EXPLAIN WHAT A FIBER IS**
+In addition, it's worth mentioning what a Fiber (or co-routine, or continuation) is. In short, it's function that can be suspended and resumed at arbitrary points throughout its execution. As flows are co-routines, this means they can be suspended and resumed, enabling the Corda node to run multiple flows concurrently. For example, when one flow is waiting to receive a message, another flow can continue execution. You can think of this as similar to "multi-threading". However, thread execution is scheduled by the operating system where as Fiber scheduling happens at the application layer so it's possible to exercise a fair degree of control over the scheduling mechanism.
 
-That's probably enough for now. One things to note is that this  journey only describes the happy path scenario. As such, it doesn't delve into the complexities of handling errors which occur for whatever reason. That can be the subject of another paper. Now, let us first start with sending a message from a flow.
+That's probably enough jargon for now. One thing to note is that this journey only describes the happy path scenario. As such, it doesn't delve into the complexities of handling errors which occur for whatever reason. That can be the subject of another paper. Now, let us first start with sending a message from a flow.
 
 [^erlang]: See https://erlang.org/doc/design_principles/statem.html#event-driven-state-machines for more information.
 
@@ -334,6 +332,57 @@ data class AddressedMessage(
 From this point **(3)**, the `MessagingService` passes on the `AddressedMessage` to the `MessagingExecutor`, which then checks that the internal peer queue exists and if not, then creates it and then sends the message. That's it! The call stack then unwinds all the way back to `processEventsUntilFlowIsResumed` which then exists the event loop and returns to the `FlowSessionImpl` class where execution of the user flow resumes **(4)**. 
 
 ### Receiving messages
+
+Receiving messages is more complicated than the sending because there are two code paths to consider:
+
+1. We need to follow what happens when a message is received by the local Artermis broker on the `p2p.inbound.` queue and how it makes its way to the `FlowStateMachineImpl` event queue.
+2. We also need to follow what happens when a flow is suspended such that it can receive and process a message.
+
+**Delivering a message from the p2p.inbound queue to the flow event queue**
+
+This happens independently to a user flow hitting a `flowSession.receive` block and suspending. Indeed, it might be the case that the `ExistingSessionMessage` message delivered to the flow state machine manager is not relevant for any running flow, or an `InitialSessionMessage` cannot instantiate the specified flow by `InitialSessionMessage.initiatorFlowClassName` because it doesn't exist on the local machine.
+
+![deliver-message](/Users/rogerwillis/Desktop/flow messaging/deliver-message.png)
+
+During start-up of all the various messaging components an event handler — defined in `SingleThreadedStateMachineManager` — for incoming peer to peer messages is passed to `FlowMessagingImpl`:
+
+```kotlin
+flowMessaging.start { _, deduplicationHandler ->
+    executor.execute {
+        deliverExternalEvent(deduplicationHandler.externalCause)
+    }
+}
+```
+
+This handler dispatches existing session or new session messages to where they are handled inside `SingleThreadedStateMachineManager`. The handler is registered inside the `P2PMessagingClient` when it starts up. Additionally, when the `P2PMessagingClient` starts-up it creates an instance of `P2PMessagingConsumer` which listens for new messaging in the `p2p.inbound` queue. When a message is received, the `P2PMessagingService.deliver` method is called, which in-turn invokes the handler which was registered at start-up. 
+
+The `deliver` method handles de-duplification of the message to be delivered such that if the message has been seen before then it is dropped and a note is added to the logs that it was a duplicate and dropped. Processed message IDs are only persisted via a the database transaction for the flow the message is in respect of completes. Therefore, there is a period between when the message is seen and when it is persisted and during this period, Artermis might try to re-deliver the message as acknowledgements are only sent when the message ID is persisted. As such, the message deduplification handler also maintains an in memory "being processed" list which is updated immediately after the duplicated check. Note: that this is _just_ the happy-path scenario — there are various others which are not discussed here. 
+
+So, with the above in mind, when a message is pushed to the `p2p.inbound` queue, it makes it's way through the various handlers to either `onSessionInit` or `onExistingSessionMessage` in `SingleThreadedStateMachineManager`. 
+
+For existing flow sessions, the flow session ID is looked up to retrive the `FlowStateMachineManegerImpl` for the flow and then the message is enqueued in the event queue. That's it!
+
+**How `InitiatedBy` flows start**
+
+For new flow sessions, it's a bit more complicated as the flow needs to be set up and started. This follows the same process as starting a flow via RPC. The flow begins with an `Unstarted` state and the `DoRemainingWork` event enqueued in the event queue. In the `DoRemainingWork` transition executor, some actions are specified to start a new database transation, create and persist a new checkpoint, acknowledge the initial session message — by sending an acknowledgement back to the sending node — and then commit the database transaction. Most importantly, the initial session message is added to the `receivedMessages` list in the flow state so that when the flow starts execution and reaches the `receive` call, then the message can be retrieved by the process explained below. 
+
+**Retrieving messages stored in the flow state**
+
+Let's assume that at some point before a `receive` call is hit, the `DeliverSessionMessage` event is handled — it updates the received messages part of the state machine state with the new message. 
+
+![deliver-session-message](/Users/rogerwillis/Desktop/flow messaging/deliver-session-message.png)
+
+
+
+Later on, at the point a started flow hits a `recieve` call, the flow is suspended in the same way that is it for sending a message. At this point any received messages are acknowledged. A `DoRemainingWork` event is enqueued.
+
+![suspend-receive](/Users/rogerwillis/Desktop/flow messaging/suspend-receive.png)
+
+Next, the `DoRemainingWork` transition is handled:
+
+![resume-flow](/Users/rogerwillis/Desktop/flow messaging/resume-flow.png)
+
+The key points to note here are that **(1)** the `DoRemainingWork` event is dequeued and handled **(2)**. The `receiveTransition` method in `StartedFlowTransition` returns an object containing the received messages which is eventually passed back through `suspend` to the call to `recieve`. The flow continuation state is set to `Resume` so that when the event loop in `processEventsUntilFlowIsResumed` will be exited. In the meantime, a new database transaction is created in anticipation of resuming the flow **(3)**. Lastly, the flow of execition returns to the users flow code — the `receive` call returns the message received from the remote node. 
 
 # Appendix
 
