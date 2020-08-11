@@ -289,11 +289,11 @@ After all this is done, the call stack unwinds back to `processEvent()` so that 
 
 This is where the actual message sending happens. After the next state and list of actions have been determined, the `TransitionExecutor` is invoked **(1)**, which iterates through the list of actions and executes each one via the `ActionExecutor`. The `ActionExecutor` is basically a big `when` statement with instructions for what to do for each action. In our case, sending a message requires a code path which involves the `MessagingService`.
 
-![actions-and-call-stack](/Users/rogerwillis/Desktop/flow messaging/actions-and-call-stack.png)
+![actions-and-call-stack](actions-and-call-stack.png)
 
 In the picture above, you can see a debugging session with a breakpoint situated in the `ActionEcutorImpl` class before the next list of actions are to be executed for sending a message. As mentioned previously, the two actions to execute are to send a message and to create a transaction. Also, the continuation state is set to `Resume`.
 
-![execute-action](/Users/rogerwillis/Desktop/flow messaging/execute-action.png)
+![execute-action](execute-action.png)
 
 From the `ActionExecutor`, the `FlowMessaging` API is called to `sendSessionMessage()` **(2)**. This takes a `SessionMessage` and does some checking to see that the `Desination` for the message is a valid `Party`. It also serializes the `SessionMessage` and wraps it with an implementation of the `Message` class. It's worth noting here that if the message is an initial session message then it also contains some metadata such as the `FlowLogic` sub-class which the remote node should instantiate upon receiving the message and the session ID for the sender. If the message is for an exisitng session, then the session ID for the remote node is included, so that it can easily match up the received message to the correct flow state machine.
 
@@ -342,7 +342,7 @@ Receiving messages is more complicated than the sending because there are two co
 
 This happens independently to a user flow hitting a `flowSession.receive` block and suspending. Indeed, it might be the case that the `ExistingSessionMessage` message delivered to the flow state machine manager is not relevant for any running flow, or an `InitialSessionMessage` cannot instantiate the specified flow by `InitialSessionMessage.initiatorFlowClassName` because it doesn't exist on the local machine.
 
-![deliver-message](/Users/rogerwillis/Desktop/flow messaging/deliver-message.png)
+![deliver-message](deliver-message.png)
 
 During start-up of all the various messaging components an event handler — defined in `SingleThreadedStateMachineManager` — for incoming peer to peer messages is passed to `FlowMessagingImpl`:
 
@@ -370,17 +370,17 @@ For new flow sessions, it's a bit more complicated as the flow needs to be set u
 
 Let's assume that at some point before a `receive` call is hit, the `DeliverSessionMessage` event is handled — it updates the received messages part of the state machine state with the new message. 
 
-![deliver-session-message](/Users/rogerwillis/Desktop/flow messaging/deliver-session-message.png)
+![deliver-session-message](deliver-session-message.png)
 
 
 
 Later on, at the point a started flow hits a `recieve` call, the flow is suspended in the same way that is it for sending a message. At this point any received messages are acknowledged. A `DoRemainingWork` event is enqueued.
 
-![suspend-receive](/Users/rogerwillis/Desktop/flow messaging/suspend-receive.png)
+![suspend-receive](suspend-receive.png)
 
 Next, the `DoRemainingWork` transition is handled:
 
-![resume-flow](/Users/rogerwillis/Desktop/flow messaging/resume-flow.png)
+![resume-flow](resume-flow.png)
 
 The key points to note here are that **(1)** the `DoRemainingWork` event is dequeued and handled **(2)**. The `receiveTransition` method in `StartedFlowTransition` returns an object containing the received messages which is eventually passed back through `suspend` to the call to `recieve`. The flow continuation state is set to `Resume` so that when the event loop in `processEventsUntilFlowIsResumed` will be exited. In the meantime, a new database transaction is created in anticipation of resuming the flow **(3)**. Lastly, the flow of execition returns to the users flow code — the `receive` call returns the message received from the remote node. 
 
